@@ -74,7 +74,7 @@ class _WallspaceCaptionsBase(Pipeline):
         self._ws_listener: WebSocketListener | None = None
 
         if self._text_source == "osc":
-            osc_port = int(kwargs.get("osc_port", 9000))
+            osc_port = int(kwargs.get("osc_port", 9001))
             self._osc_listener = OscListener(
                 port=osc_port,
                 buffer=self._buffer,

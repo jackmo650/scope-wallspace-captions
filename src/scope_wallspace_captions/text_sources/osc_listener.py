@@ -32,30 +32,41 @@ class OscListener:
     ) -> None:
         self._port = port
         self._buffer = buffer
+        self._running = False
 
         dispatcher = Dispatcher()
         dispatcher.map(address, self._on_text)
         dispatcher.map(clear_address, self._on_clear)
 
-        self._server = ThreadingOSCUDPServer(("0.0.0.0", port), dispatcher)
+        try:
+            self._server = ThreadingOSCUDPServer(("0.0.0.0", port), dispatcher)
+        except OSError as e:
+            logger.error(
+                f"[WS Captions] Cannot bind OSC port {port}: {e}. "
+                f"Is another instance already using this port? "
+                f"Try a different osc_port value."
+            )
+            self._server = None
+            self._thread = None
+            return
+
         self._thread = threading.Thread(
             target=self._server.serve_forever,
             daemon=True,
             name=f"osc-caption-{port}",
         )
-        self._running = False
 
     # ── Lifecycle ──
 
     def start(self) -> None:
-        if self._running:
+        if self._running or self._server is None:
             return
         self._running = True
         self._thread.start()
-        logger.info(f"[WS Captions] OSC listener started on port {self._port}")
+        logger.info(f"[WS Captions] OSC listener started on 0.0.0.0:{self._port} (address: /caption/text)")
 
     def stop(self) -> None:
-        if not self._running:
+        if not self._running or self._server is None:
             return
         self._running = False
         self._server.shutdown()

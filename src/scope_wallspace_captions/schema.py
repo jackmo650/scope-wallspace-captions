@@ -49,10 +49,10 @@ class _WallspaceCaptionsBaseConfig(BasePipelineConfig):
     )
 
     osc_port: int = Field(
-        default=9000,
+        default=9001,
         ge=1024,
         le=65535,
-        description="UDP port for OSC listener (text_source='osc')",
+        description="UDP port for OSC listener — matches WallSpace broadcast port (default 9001)",
         json_schema_extra=ui_field_config(order=2, label="OSC Port", is_load_param=True),
     )
 
