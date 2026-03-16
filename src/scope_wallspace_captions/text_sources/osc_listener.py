@@ -8,6 +8,7 @@ Listens for incoming OSC messages matching the WallSpace/A.EYE.ECHO format:
 from __future__ import annotations
 
 import logging
+import socket
 import threading
 from typing import TYPE_CHECKING
 
@@ -18,6 +19,23 @@ if TYPE_CHECKING:
     from .buffer import TextBuffer
 
 logger = logging.getLogger(__name__)
+
+
+class _ReusableOSCUDPServer(ThreadingOSCUDPServer):
+    """ThreadingOSCUDPServer with SO_REUSEADDR + SO_REUSEPORT.
+
+    Prevents [Errno 48] Address already in use when a pipeline is
+    reloaded and the previous socket hasn't been fully released yet.
+    """
+
+    allow_reuse_address = True
+
+    def server_bind(self) -> None:
+        try:
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        except (AttributeError, OSError):
+            pass  # SO_REUSEPORT not available on all platforms
+        super().server_bind()
 
 
 class OscListener:
@@ -39,7 +57,7 @@ class OscListener:
         dispatcher.map(clear_address, self._on_clear)
 
         try:
-            self._server = ThreadingOSCUDPServer(("0.0.0.0", port), dispatcher)
+            self._server = _ReusableOSCUDPServer(("0.0.0.0", port), dispatcher)
         except OSError as e:
             logger.error(
                 f"[WS Captions] Cannot bind OSC port {port}: {e}. "
