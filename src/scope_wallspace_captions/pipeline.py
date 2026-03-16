@@ -247,7 +247,9 @@ class WallspaceCaptionsPrePipeline(_WallspaceCaptionsBase):
     """Preprocessor — text baked into frames before AI generation.
 
     The AI model sees and stylises/integrates the caption text into its
-    generation. Prompt forwarding tells the model what the text says.
+    generation. Prompt forwarding works here: the ``prompts`` key in our
+    output dict is forwarded as parameters to the main pipeline via
+    Scope's ``extra_params`` mechanism.
     """
 
     @classmethod
@@ -258,8 +260,10 @@ class WallspaceCaptionsPrePipeline(_WallspaceCaptionsBase):
 class WallspaceCaptionsPostPipeline(_WallspaceCaptionsBase):
     """Postprocessor — clean text overlay after AI generation.
 
-    Readable captions rendered on top of AI output. Prompt forwarding
-    still drives the visual generation from transcription text.
+    Readable captions rendered on top of AI output. Note: prompt
+    forwarding from a postprocessor does NOT update the main pipeline's
+    prompt (Scope only forwards extra params downstream, not upstream).
+    Use the Pre variant or send prompts via OSC / WebRTC data channel.
     """
 
     @classmethod
