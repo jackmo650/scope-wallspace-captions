@@ -15,6 +15,8 @@ class TextBuffer:
       must be responsive).
     - Prompts: ``get_current_prompt()`` rate-limits output so the downstream
       diffusion model isn't whiplashed by every word.
+
+    Tracks write/read sequence numbers so callers can detect unprocessed entries.
     """
 
     def __init__(self, capacity: int = 100) -> None:
@@ -22,6 +24,8 @@ class TextBuffer:
         self._entries: deque[tuple[float, str]] = deque(maxlen=capacity)
         self._last_prompt_text: str = ""
         self._last_prompt_time: float = 0.0
+        self._write_seq: int = 0
+        self._read_seq: int = 0
 
     # ── Write ──
 
@@ -31,6 +35,7 @@ class TextBuffer:
             return
         with self._lock:
             self._entries.append((time.monotonic(), text.strip()))
+            self._write_seq += 1
 
     def clear(self) -> None:
         """Remove all entries and reset prompt state."""
@@ -38,8 +43,15 @@ class TextBuffer:
             self._entries.clear()
             self._last_prompt_text = ""
             self._last_prompt_time = 0.0
+            self._read_seq = self._write_seq
 
     # ── Read ──
+
+    @property
+    def pending_count(self) -> int:
+        """Number of entries pushed since last read."""
+        with self._lock:
+            return self._write_seq - self._read_seq
 
     def get_display_lines(self, max_lines: int = 3) -> list[str]:
         """Return the *max_lines* most recent text entries (always fresh)."""
@@ -47,6 +59,7 @@ class TextBuffer:
             if not self._entries:
                 return []
             texts = [t for _, t in self._entries]
+            self._read_seq = self._write_seq
             return texts[-max_lines:]
 
     def get_latest_text(self) -> str:
@@ -73,6 +86,7 @@ class TextBuffer:
                 return None  # Throttled
             self._last_prompt_text = latest_text
             self._last_prompt_time = now
+            self._read_seq = self._write_seq
             return latest_text
 
     def get_last_update_time(self) -> float:

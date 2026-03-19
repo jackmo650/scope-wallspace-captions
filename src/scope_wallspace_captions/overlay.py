@@ -105,6 +105,17 @@ class OverlayConfig:
     punctuation_react: bool = True
     event_color_shift: bool = False
 
+    # Responsive layout
+    responsive_layout: bool = True
+    reference_height: int = 1080
+    safe_zone_pct: float = 5.0
+
+    # Token-level rendering
+    token_rendering: bool = False
+    token_fade_in: float = 0.3
+    karaoke_enabled: bool = False
+    karaoke_color: tuple[int, int, int] = (0, 200, 255)
+
 
 # ── Event Colour Map ────────────────────────────────────────────────────────
 
@@ -114,6 +125,31 @@ EVENT_COLORS: dict[str, tuple[int, int, int]] = {
     "pause": (150, 150, 150),        # Faded grey
     "emphasis": (255, 255, 100),     # Bright yellow
 }
+
+
+# ── Responsive Scaling ─────────────────────────────────────────────────────
+
+
+def _scale_value(value: int | float, frame_height: int, ref_height: int) -> int:
+    """Scale a pixel value proportionally to frame resolution."""
+    return max(1, int(value * frame_height / ref_height))
+
+
+def _apply_responsive_scaling(config: OverlayConfig, frame_height: int) -> OverlayConfig:
+    """Return a copy of config with font size, outline, padding scaled to frame resolution."""
+    if not config.responsive_layout or frame_height == config.reference_height:
+        return config
+    ref = config.reference_height
+    # Shallow copy via dataclass replace
+    import copy
+    scaled = copy.copy(config)
+    scaled.font_size = _scale_value(config.font_size, frame_height, ref)
+    scaled.outline_width = _scale_value(config.outline_width, frame_height, ref)
+    scaled.bg_padding = _scale_value(config.bg_padding, frame_height, ref)
+    scaled.bg_corner_radius = _scale_value(config.bg_corner_radius, frame_height, ref)
+    # Reload font at new size
+    scaled.font = None
+    return scaled
 
 
 # ── Main Render Function ───────────────────────────────────────────────────
@@ -138,6 +174,10 @@ def render_caption_overlay(
         return frame
 
     h, w, c = frame.shape
+
+    # Apply responsive scaling based on frame resolution
+    config = _apply_responsive_scaling(config, h)
+
     font = config.font or load_font(size=config.font_size)
 
     # ── Word-wrap lines to fit max_width ──
@@ -238,8 +278,11 @@ def render_caption_overlay(
                 stroke_fill=outline_rgba,
             )
 
-        # ── Per-word rendering for flash / emphasis ──
-        if flash_word or (config.punctuation_react and config.events):
+        # ── Per-word rendering ──
+        if config.token_rendering and config.events:
+            # Token-level: per-word fade-in, karaoke, independent effects
+            _draw_tokens_with_effects(draw, line, tx, ty, font, text_rgba, config)
+        elif flash_word or (config.punctuation_react and config.events):
             _draw_words_with_effects(
                 draw, line, tx, ty, font, text_rgba, config, flash_word,
             )
@@ -257,9 +300,11 @@ def render_caption_overlay(
 
     paste_y = anchor_y - overlay_h // 2
 
-    # Clamp to frame bounds
-    paste_x = max(0, min(paste_x, w - overlay_w))
-    paste_y = max(0, min(paste_y, h - overlay_h))
+    # Clamp to frame bounds with safe zone
+    safe_margin_x = int(w * config.safe_zone_pct / 100) if config.responsive_layout else 0
+    safe_margin_y = int(h * config.safe_zone_pct / 100) if config.responsive_layout else 0
+    paste_x = max(safe_margin_x, min(paste_x, w - overlay_w - safe_margin_x))
+    paste_y = max(safe_margin_y, min(paste_y, h - overlay_h - safe_margin_y))
 
     img.paste(overlay, (paste_x, paste_y), overlay)
 
@@ -379,6 +424,67 @@ def _draw_words_with_effects(
         # Emphasis — ALL CAPS
         if clean.isupper() and len(clean) >= 3:
             rgba = (*EVENT_COLORS.get("emphasis", base_rgba[:3]), base_rgba[3])
+
+        draw.text((cursor_x, y), display, font=font, fill=rgba)
+        cursor_x += _text_width(font, display)
+
+
+def _draw_tokens_with_effects(
+    draw: ImageDraw.ImageDraw,
+    line: str,
+    x: int,
+    y: int,
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+    base_rgba: tuple[int, int, int, int],
+    config: OverlayConfig,
+) -> None:
+    """Draw a line token-by-token with fade-in, karaoke highlight, and per-word effects."""
+    import time as _time
+    from .events import CaptionEventType
+
+    words = line.split()
+    cursor_x = x
+    now = _time.monotonic()
+
+    # Build a map of word → event for token effects
+    word_events: dict[str, CaptionEvent] = {}
+    for ev in config.events:
+        if ev.type == CaptionEventType.WORD:
+            word_events[ev.text.lower()] = ev
+
+    for i, word in enumerate(words):
+        display = word + (" " if i < len(words) - 1 else "")
+        clean = word.strip(".,!?;:\"'()[]{}—–-")
+        rgba = base_rgba
+
+        # Token fade-in: compute opacity based on age
+        ev = word_events.get(clean.lower())
+        if ev and config.token_fade_in > 0:
+            age = now - ev.timestamp
+            if age < config.token_fade_in:
+                fade_alpha = int(rgba[3] * (age / config.token_fade_in))
+                rgba = (rgba[0], rgba[1], rgba[2], max(0, fade_alpha))
+
+        # Karaoke highlight: most recent word gets highlight colour
+        if config.karaoke_enabled and ev:
+            # The most recent WORD event is the "active" karaoke word
+            latest_word_ev = None
+            for rev_ev in reversed(config.events):
+                if rev_ev.type == CaptionEventType.WORD:
+                    latest_word_ev = rev_ev
+                    break
+            if latest_word_ev and clean.lower() == latest_word_ev.text.lower():
+                rgba = (*config.karaoke_color, rgba[3])
+
+        # Flash the newest word
+        if config.word_flash_enabled:
+            flash = _get_flash_word(config.events)
+            if flash and clean.lower() == flash.lower():
+                rgba = (255, 255, 255, 255)
+
+        # Emphasis — ALL CAPS
+        if clean.isupper() and len(clean) >= 3:
+            rgba = (*EVENT_COLORS.get("emphasis", base_rgba[:3]), rgba[3])
 
         draw.text((cursor_x, y), display, font=font, fill=rgba)
         cursor_x += _text_width(font, display)

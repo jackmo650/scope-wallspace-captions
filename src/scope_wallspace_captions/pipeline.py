@@ -62,6 +62,8 @@ class _WallspaceCaptionsBase(Pipeline):
         self._buffer = TextBuffer(capacity=100)
         self._event_parser = CaptionEventParser(
             pause_threshold_sec=kwargs.get("pause_threshold", 2.0),
+            timing_smoothing=kwargs.get("timing_smoothing", 0.0),
+            timing_outlier_threshold=kwargs.get("timing_outlier_threshold", 3.0),
         )
         self._event_buffer = CaptionEventBuffer(capacity=200)
 
@@ -139,6 +141,8 @@ class _WallspaceCaptionsBase(Pipeline):
         active_events = []
         if events_enabled and text:
             self._event_parser.pause_threshold_sec = kwargs.get("pause_threshold", 2.0)
+            self._event_parser._smoother.smoothing_factor = kwargs.get("timing_smoothing", 0.0)
+            self._event_parser._smoother.outlier_threshold = kwargs.get("timing_outlier_threshold", 3.0)
             parsed = self._event_parser.parse(text)
             if parsed:
                 self._event_buffer.push_many(parsed)
@@ -204,6 +208,19 @@ class _WallspaceCaptionsBase(Pipeline):
                 word_flash_enabled=kwargs.get("word_flash_enabled", False),
                 punctuation_react=kwargs.get("punctuation_react", True),
                 event_color_shift=kwargs.get("event_color_shift", False),
+                # Responsive layout
+                responsive_layout=kwargs.get("responsive_layout", True),
+                reference_height=kwargs.get("reference_height", 1080),
+                safe_zone_pct=kwargs.get("safe_zone_pct", 5.0),
+                # Token-level rendering
+                token_rendering=kwargs.get("token_rendering", False),
+                token_fade_in=kwargs.get("token_fade_in", 0.3),
+                karaoke_enabled=kwargs.get("karaoke_enabled", False),
+                karaoke_color=(
+                    kwargs.get("karaoke_color_r", 0),
+                    kwargs.get("karaoke_color_g", 200),
+                    kwargs.get("karaoke_color_b", 255),
+                ),
             )
 
             for i in range(frames.shape[0]):

@@ -334,6 +334,76 @@ class _WallspaceCaptionsBaseConfig(BasePipelineConfig):
         json_schema_extra=ui_field_config(order=65, label="Event Colour Shift"),
     )
 
+    timing_smoothing: float = Field(
+        default=0.3, ge=0.0, le=1.0,
+        description="Word timing smoothing level (0=off, 1=max). Reduces jitter from speech engines",
+        json_schema_extra=ui_field_config(order=66, label="Timing Smoothing"),
+    )
+
+    timing_outlier_threshold: float = Field(
+        default=3.0, ge=1.0, le=10.0,
+        description="Standard deviations before a word timing is treated as an outlier",
+        json_schema_extra=ui_field_config(order=67, label="Timing Outlier Threshold"),
+    )
+
+    # ── Token-Level Rendering ────────────────────────────────────────────
+
+    token_rendering: bool = Field(
+        default=False,
+        description="Enable per-word token rendering with independent timing, opacity, and colour",
+        json_schema_extra=ui_field_config(order=70, label="Token Rendering"),
+    )
+
+    token_fade_in: float = Field(
+        default=0.3, ge=0.0, le=2.0,
+        description="Seconds to fade in new tokens (0 = instant appear)",
+        json_schema_extra=ui_field_config(order=71, label="Token Fade-In (sec)"),
+    )
+
+    karaoke_enabled: bool = Field(
+        default=False,
+        description="Karaoke-style: highlight words sequentially based on timestamps",
+        json_schema_extra=ui_field_config(order=72, label="Karaoke Mode"),
+    )
+
+    karaoke_color_r: int = Field(
+        default=0, ge=0, le=255,
+        description="Karaoke highlight colour — red channel",
+        json_schema_extra=ui_field_config(order=73, label="Karaoke Red"),
+    )
+
+    karaoke_color_g: int = Field(
+        default=200, ge=0, le=255,
+        description="Karaoke highlight colour — green channel",
+        json_schema_extra=ui_field_config(order=74, label="Karaoke Green"),
+    )
+
+    karaoke_color_b: int = Field(
+        default=255, ge=0, le=255,
+        description="Karaoke highlight colour — blue channel",
+        json_schema_extra=ui_field_config(order=75, label="Karaoke Blue"),
+    )
+
+    # ── Responsive Layout ────────────────────────────────────────────────
+
+    responsive_layout: bool = Field(
+        default=True,
+        description="Scale fonts, outlines, and padding proportionally to frame resolution",
+        json_schema_extra=ui_field_config(order=18, label="Responsive Layout"),
+    )
+
+    reference_height: int = Field(
+        default=1080, ge=360, le=4320,
+        description="Reference resolution for font sizes (fonts are authored for this height)",
+        json_schema_extra=ui_field_config(order=19, label="Reference Height"),
+    )
+
+    safe_zone_pct: float = Field(
+        default=5.0, ge=0.0, le=20.0,
+        description="Safe zone margin (% of frame) — captions won't render in the outer margin",
+        json_schema_extra=ui_field_config(order=20, label="Safe Zone %"),
+    )
+
 
 # ── Pre/Post Variants ──────────────────────────────────────────────────────
 

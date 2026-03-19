@@ -12,6 +12,7 @@ shifts on questions, intensity spikes on exclamations, fades on pauses.
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from collections import deque
@@ -52,6 +53,82 @@ class CaptionEvent:
         }
 
 
+# ── Timestamp Smoother ──────────────────────────────────────────────────────
+
+
+class TimestampSmoother:
+    """Smooths word arrival timestamps using exponential moving average (EMA).
+
+    Reduces jitter from inconsistent speech engine timing (Whisper, Web Speech).
+    Also detects and replaces timing outliers.
+    """
+
+    def __init__(
+        self,
+        smoothing_factor: float = 0.3,
+        outlier_threshold: float = 3.0,
+        window_size: int = 20,
+    ) -> None:
+        self.smoothing_factor = max(0.0, min(1.0, smoothing_factor))
+        self.outlier_threshold = outlier_threshold
+        self._intervals: deque[float] = deque(maxlen=window_size)
+        self._ema_interval: float = 0.0
+        self._last_raw_time: float = 0.0
+        self._last_smoothed_time: float = 0.0
+
+    def smooth(self, raw_timestamp: float) -> float:
+        """Return a smoothed timestamp given a raw arrival time.
+
+        When smoothing_factor is 0, returns the raw timestamp unchanged.
+        """
+        if self.smoothing_factor == 0.0:
+            return raw_timestamp
+
+        if self._last_raw_time == 0.0:
+            self._last_raw_time = raw_timestamp
+            self._last_smoothed_time = raw_timestamp
+            return raw_timestamp
+
+        raw_interval = raw_timestamp - self._last_raw_time
+        if raw_interval <= 0:
+            return self._last_smoothed_time
+
+        # Update EMA of inter-word interval
+        alpha = self.smoothing_factor
+        if self._ema_interval == 0.0:
+            self._ema_interval = raw_interval
+        else:
+            self._ema_interval = alpha * self._ema_interval + (1 - alpha) * raw_interval
+
+        self._intervals.append(raw_interval)
+
+        # Outlier detection: replace extreme intervals with EMA
+        interval_to_use = raw_interval
+        if len(self._intervals) >= 3:
+            mean = sum(self._intervals) / len(self._intervals)
+            variance = sum((x - mean) ** 2 for x in self._intervals) / len(self._intervals)
+            std = math.sqrt(variance) if variance > 0 else 0.0
+            if std > 0 and abs(raw_interval - mean) > self.outlier_threshold * std:
+                interval_to_use = self._ema_interval
+        else:
+            interval_to_use = alpha * self._ema_interval + (1 - alpha) * raw_interval
+
+        # Blend raw interval with smoothed estimate
+        blended = (1 - alpha) * raw_interval + alpha * interval_to_use
+        smoothed = self._last_smoothed_time + blended
+
+        self._last_raw_time = raw_timestamp
+        self._last_smoothed_time = smoothed
+        return smoothed
+
+    def reset(self) -> None:
+        """Clear all internal state."""
+        self._intervals.clear()
+        self._ema_interval = 0.0
+        self._last_raw_time = 0.0
+        self._last_smoothed_time = 0.0
+
+
 # ── Parser ──────────────────────────────────────────────────────────────────
 
 
@@ -62,12 +139,21 @@ class CaptionEventParser:
     pauses, speaker changes, and punctuation events.
     """
 
-    def __init__(self, pause_threshold_sec: float = 2.0) -> None:
+    def __init__(
+        self,
+        pause_threshold_sec: float = 2.0,
+        timing_smoothing: float = 0.0,
+        timing_outlier_threshold: float = 3.0,
+    ) -> None:
         self.pause_threshold_sec = pause_threshold_sec
         self._prev_text: str = ""
         self._prev_time: float = 0.0
         self._prev_speaker: str | None = None
         self._prev_words: list[str] = []
+        self._smoother = TimestampSmoother(
+            smoothing_factor=timing_smoothing,
+            outlier_threshold=timing_outlier_threshold,
+        )
 
     def parse(self, text: str, speaker: str | None = None) -> list[CaptionEvent]:
         """Parse *text* into a list of events relative to previous state.
@@ -85,7 +171,7 @@ class CaptionEventParser:
 
         events: list[CaptionEvent] = []
 
-        # ── Pause detection ──
+        # ── Pause detection (uses raw time — pauses should not be smoothed) ──
         if self._prev_time > 0 and (now - self._prev_time) >= self.pause_threshold_sec:
             events.append(CaptionEvent(
                 type=CaptionEventType.PAUSE,
@@ -113,18 +199,19 @@ class CaptionEventParser:
                 events.append(CaptionEvent(
                     type=CaptionEventType.SENTENCE_START,
                     text=new_words[0],
-                    timestamp=now,
+                    timestamp=self._smoother.smooth(now),
                 ))
 
             for i, word in enumerate(new_words):
                 clean = word.strip(".,!?;:\"'()[]{}—–-")
+                smoothed_ts = self._smoother.smooth(now)
 
                 # EMPHASIS — ALL CAPS words (3+ chars to avoid acronyms like "I")
                 if clean.isupper() and len(clean) >= 3:
                     events.append(CaptionEvent(
                         type=CaptionEventType.EMPHASIS,
                         text=clean,
-                        timestamp=now,
+                        timestamp=smoothed_ts,
                         metadata={"word_index": len(self._prev_words) + i},
                     ))
 
@@ -132,7 +219,7 @@ class CaptionEventParser:
                 events.append(CaptionEvent(
                     type=CaptionEventType.WORD,
                     text=clean,
-                    timestamp=now,
+                    timestamp=smoothed_ts,
                     metadata={
                         "word_index": len(self._prev_words) + i,
                         "word_count": len(words),
@@ -177,6 +264,7 @@ class CaptionEventParser:
         self._prev_time = 0.0
         self._prev_speaker = None
         self._prev_words = []
+        self._smoother.reset()
 
     # ── Helpers ──
 
